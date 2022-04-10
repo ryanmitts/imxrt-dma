@@ -105,6 +105,46 @@ impl Channel {
         &self.registers.TCD[self.index]
     }
 
+    pub fn from_tcd(&self, from: &crate::ral::tcd::RegisterBlock) {
+        let tcd = self.tcd();
+
+        let saddr = ral::read_reg!(crate::ral::tcd, from, SADDR);
+        ral::write_reg!(crate::ral::tcd, tcd, SADDR, saddr);
+
+        let soff = ral::read_reg!(crate::ral::tcd, from, SOFF);
+        ral::write_reg!(crate::ral::tcd, tcd, SOFF, soff);
+
+        let dattr = ral::read_reg!(crate::ral::tcd, from, DATTR);
+        ral::write_reg!(crate::ral::tcd, tcd, DATTR, dattr);
+
+        let sattr = ral::read_reg!(crate::ral::tcd, from, SATTR);
+        ral::write_reg!(crate::ral::tcd, tcd, SATTR, sattr);
+
+        let nbytes = ral::read_reg!(crate::ral::tcd, from, NBYTES);
+        ral::write_reg!(crate::ral::tcd, tcd, NBYTES, nbytes);
+
+        let slast = ral::read_reg!(crate::ral::tcd, from, SLAST);
+        ral::write_reg!(crate::ral::tcd, tcd, SLAST, slast);
+
+        let daddr = ral::read_reg!(crate::ral::tcd, from, DADDR);
+        ral::write_reg!(crate::ral::tcd, tcd, DADDR, daddr);
+
+        let doff = ral::read_reg!(crate::ral::tcd, from, DOFF);
+        ral::write_reg!(crate::ral::tcd, tcd, DOFF, doff);
+
+        let citer = ral::read_reg!(crate::ral::tcd, from, CITER);
+        ral::write_reg!(crate::ral::tcd, tcd, CITER, citer);
+
+        let dlast = ral::read_reg!(crate::ral::tcd, from, DLAST_SGA);
+        ral::write_reg!(crate::ral::tcd, tcd, DLAST_SGA, dlast);
+
+        let csr = ral::read_reg!(crate::ral::tcd, from, CSR);
+        ral::write_reg!(crate::ral::tcd, tcd, CSR, csr);
+
+        let biter = ral::read_reg!(crate::ral::tcd, from, BITER);
+        ral::write_reg!(crate::ral::tcd, tcd, BITER, biter);
+    }
+
     /// Set the source address for a DMA transfer
     ///
     /// `saddr` should be a memory location that can provide the DMA controller

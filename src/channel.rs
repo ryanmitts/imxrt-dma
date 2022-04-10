@@ -101,7 +101,7 @@ impl Channel {
     }
 
     /// Returns a handle to this channel's transfer control descriptor
-    fn tcd(&self) -> &crate::ral::tcd::RegisterBlock {
+    pub fn tcd(&self) -> &crate::ral::tcd::RegisterBlock {
         &self.registers.TCD[self.index]
     }
 

@@ -375,6 +375,12 @@ impl Channel {
         ral::modify_reg!(crate::ral::tcd, tcd, CSR, INTMAJOR: intr as u16);
     }
 
+    pub fn set_scatter_gather(&mut self, intr: bool) {
+        let tcd = self.tcd();
+        ral::modify_reg!(crate::ral::tcd, tcd, CSR, DONE: 0);
+        ral::modify_reg!(crate::ral::tcd, tcd, CSR, ESG: intr as u16);
+    }
+
     /// Indicates if the DMA transfer has completed
     pub fn is_complete(&self) -> bool {
         let tcd = self.tcd();

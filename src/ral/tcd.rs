@@ -113,6 +113,20 @@ pub mod CSR {
         pub mod RW {}
     }
 
+    /// Enable scatter/gather
+    pub mod ESG {
+        /// Offset (4 bits)
+        pub const offset: u16 = 4;
+        /// Mask (1 bit: 1 << 4)
+        pub const mask: u16 = 1 << offset;
+        /// Read-only values (empty)
+        pub mod R {}
+        /// Write-only values (empty)
+        pub mod W {}
+        /// Read-write values
+        pub mod RW {}
+    }
+
     /// Channel Done
     pub mod DONE {
         /// Offset (7 bits)

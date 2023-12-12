@@ -16,15 +16,16 @@ use core::{
 ///
 /// `Memcpy` yields when it's moved the minimum amount of elements between two linear
 /// buffers. Use the [`memcpy`](crate::memcpy::memcpy) function to define the transfer.
-pub struct Memcpy<'a> {
+pub struct Memcpy<'a, E> {
     transfer: Transfer<'a>,
     channel: &'a Channel,
+    _elem: core::marker::PhantomData<(&'a E, &'a mut E)>,
 }
 
 /// Perform a DMA-powered `memcpy` between the `source` and `destination` buffers
 ///
 /// Copies the minimum number of elements between the two buffers. You're responsible
-/// for enabling any interrupts, and calling [`on_interrupt`](crate::interrupt::on_interrupt)
+/// for enabling any interrupts, and calling [`on_interrupt`](crate::Dma::on_interrupt)
 /// if the interrupt fires. Otherwise, you may poll the transfer until completion.
 ///
 /// # Example
@@ -33,31 +34,32 @@ pub struct Memcpy<'a> {
 /// the DMA channel 7 interrupt fires.
 ///
 /// ```no_run
-/// use imxrt_dma::{channel::Channel, memcpy, on_interrupt};
+/// use imxrt_dma::{channel::Channel, memcpy};
 ///
+/// # static DMA: imxrt_dma::Dma<32> = unsafe { imxrt_dma::Dma::new(core::ptr::null(), core::ptr::null()) };
 /// // #[cortex_m_rt::interrupt]
 /// fn DMA7() {
-///     // Safety: DMA channel 7 valid
-///     unsafe { on_interrupt(7) };
+///     // Safety: DMA channel 7 valid and used by a future.
+///     unsafe { DMA.on_interrupt(7) };
 /// }
 ///
+/// # async fn f() -> imxrt_dma::Result<()> {
 /// let mut channel_7: Channel = // DMA channel 7
-///     # unsafe { Channel::new(7) };
+///     # unsafe { DMA.channel(7) };
 /// channel_7.set_interrupt_on_completion(true);
 /// // TODO unmask DMA7 interrupt!
 ///
 /// let source = [4u32, 5, 6, 7, 8];
 /// let mut destination = [0; 5];
 ///
-/// let transfer = memcpy::memcpy(&source, &mut destination, &mut channel_7);
-/// # mod executor { pub fn wfi(_: impl core::future::Future) {} }
-/// executor::wfi(transfer);
+/// memcpy::memcpy(&source, &mut destination, &mut channel_7).await?;
+/// # Ok(()) }
 /// ```
 pub fn memcpy<'a, E: Element>(
     source: &'a [E],
     destination: &'a mut [E],
     channel: &'a mut Channel,
-) -> Memcpy<'a> {
+) -> Memcpy<'a, E> {
     channel.disable();
 
     channel.set_disable_on_completion(true);
@@ -92,10 +94,11 @@ pub fn memcpy<'a, E: Element>(
         // Safety: transfer is properly prepared
         transfer: unsafe { Transfer::new(channel) },
         channel,
+        _elem: core::marker::PhantomData,
     }
 }
 
-impl<'a> Future for Memcpy<'a> {
+impl<E> Future for Memcpy<'_, E> {
     type Output = Result<(), Error>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {

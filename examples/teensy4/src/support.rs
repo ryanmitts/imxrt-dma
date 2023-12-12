@@ -19,6 +19,10 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
     teensy4_panic::sos()
 }
 
+// Safety: imxrt-ral has correct addresses for DMA and DMAMUX peripherals.
+pub static DMA: imxrt_dma::Dma<32> =
+    unsafe { imxrt_dma::Dma::new(ral::dma0::DMA0.cast(), ral::dmamux::DMAMUX.cast()) };
+
 /// Allocate all DMA channels
 pub fn channels(_: ral::dma0::Instance, _: ral::dmamux::Instance) -> [Option<Channel>; 32] {
     const NO_CHANNEL: Option<Channel> = None;
@@ -27,7 +31,7 @@ pub fn channels(_: ral::dma0::Instance, _: ral::dmamux::Instance) -> [Option<Cha
     for (idx, channel) in channels.iter_mut().enumerate() {
         // Safety: own the DMA instances, so we're OK to fabricate the channels.
         // It would be unsafe for the user to subsequently access the DMA instances.
-        let mut chan = unsafe { Channel::new(idx) };
+        let mut chan = unsafe { DMA.channel(idx) };
         chan.reset();
         *channel = Some(chan);
     }
@@ -71,6 +75,44 @@ pub fn wfi<F: Future>(mut fut: F) -> F::Output {
                 }
             },
             Poll::Ready(result) => return result,
+        }
+    }
+}
+
+/// Poll a future with a dummy waker.
+///
+/// Use `poll_no_wake` when you want to drive a future to completion, but you
+/// don't care about the future waking an executor. It may be used to initiate
+/// a DMA transfer that will later be awaited with [`block`].
+///
+/// Do not use `poll_no_wake` if you want an executor to be woken when the DMA
+/// transfer completes.
+pub fn poll_no_wake<F>(future: Pin<&mut F>) -> Poll<F::Output>
+where
+    F: Future,
+{
+    const VTABLE: RawWakerVTable = RawWakerVTable::new(|_| RAW_WAKER, |_| {}, |_| {}, |_| {});
+
+    const RAW_WAKER: RawWaker = RawWaker::new(core::ptr::null(), &VTABLE);
+    // Safety: raw waker meets documented requirements.
+    let waker = unsafe { Waker::from_raw(RAW_WAKER) };
+    let mut context = Context::from_waker(&waker);
+    future.poll(&mut context)
+}
+
+/// Block until the future returns a result.
+///
+/// `block` invokes [`poll_no_wake`] in a loop until the future
+/// returns a result. Consider using `block` after starting a transfer
+/// with `poll_no_wake`, and after doing other work.
+pub fn block<F>(mut future: Pin<&mut F>) -> F::Output
+where
+    F: Future,
+{
+    loop {
+        match poll_no_wake(future.as_mut()) {
+            Poll::Ready(result) => return result,
+            Poll::Pending => {}
         }
     }
 }

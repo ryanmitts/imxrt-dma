@@ -1,16 +1,26 @@
 [package]
 name = "imxrt-dma"
-version = "0.1.0"
-authors = ["Ian McIntyre <ianpmcintyre@gmail.com>"]
-edition = "2018"
+version = "0.1.1"
+edition.workspace = true
 readme = "README.md"
-license = "MIT OR Apache-2.0"
+license.workspace = true
 description = """
 DMA driver for i.MX RT processors
 """
 keywords = ["imxrt", "nxp", "embedded"]
 categories = ["embedded", "no-std"]
+repository.workspace = true
 
 [dependencies]
 cortex-m = "0.7.2"
-imxrt-ral = "0.4.2"
+ral-registers = "0.1"
+
+[workspace.package]
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/imxrt-rs/imxrt-dma"
+
+[workspace]
+members = [
+    "examples/teensy4",
+]

@@ -1,4 +1,11 @@
-//! DMA support for hardware peripherals
+//! DMA support for hardware peripherals.
+//!
+//! If a driver is compatible with this API, it implements some or all of
+//! the traits in this module. Consult your HAL for more information.
+//!
+//! Each future documents when it resolves. To wake the executor, you can
+//! route the DMA channel's interrupt handler to [`on_interrupt()`](crate::Dma::on_interrupt).
+//! Otherwise, you can poll the future in a loop.
 
 use super::{
     channel::{self, Channel, Configuration},
@@ -87,8 +94,10 @@ pub unsafe trait Destination<E: Element> {
 
 /// A DMA transfer that receives data from hardware
 ///
-/// See [`receive`](crate::peripheral::receive) to construct an `Rx`.
-pub struct Rx<'a, S, E>
+/// The future resolves when the peripheral has provided all
+/// expected data. Use [`read()`](crate::peripheral::read) to construct
+/// this future.
+pub struct Read<'a, S, E>
 where
     S: Source<E>,
     E: Element,
@@ -96,10 +105,10 @@ where
     channel: &'a Channel,
     source: &'a mut S,
     transfer: Transfer<'a>,
-    _elem: PhantomData<E>,
+    _elem: PhantomData<&'a mut E>,
 }
 
-impl<S, E> Future for Rx<'_, S, E>
+impl<S, E> Future for Read<'_, S, E>
 where
     S: Source<E>,
     E: Element,
@@ -111,7 +120,7 @@ where
     }
 }
 
-impl<S, E> Drop for Rx<'_, S, E>
+impl<S, E> Drop for Read<'_, S, E>
 where
     S: Source<E>,
     E: Element,
@@ -123,7 +132,7 @@ where
     }
 }
 
-fn prepare_receive<S, E>(channel: &mut Channel, source: &mut S, buffer: &mut [E])
+fn prepare_read<S, E>(channel: &mut Channel, source: &mut S, buffer: &mut [E])
 where
     S: Source<E>,
     E: Element,
@@ -146,18 +155,60 @@ where
     source.enable_source();
 }
 
-/// Use a DMA channel to receive a `buffer` of elements from the source peripheral
-pub fn receive<'a, S, E>(
+/// Use a DMA channel to receive a `buffer` of elements from the source peripheral.
+///
+/// Consider using a DMA interrupt handler that calls [`on_interrupt()`](crate::Dma::on_interrupt)
+/// to wake the executor when the transfer completes. Otherwise, poll the future.
+///
+/// # Example
+///
+/// Receive 32 bytes from a LPUART peripheral. Wake the executor when the transfer completes.
+///
+/// ```no_run
+/// use imxrt_dma::{peripheral, channel::Channel};
+/// # static DMA: imxrt_dma::Dma<32> = unsafe { imxrt_dma::Dma::new(core::ptr::null(), core::ptr::null()) };
+/// # struct X;
+/// # unsafe impl peripheral::Source<u8> for X {
+/// #   fn source_signal(&self) -> u32 { 0 }
+/// #   fn source_address(&self) -> *const u8 { panic!() }
+/// #   fn enable_source(&mut self) { panic!() }
+/// #   fn disable_source(&mut self) { panic!() }
+/// # }
+///
+/// // #[cortex_m_rt::interrupt]
+/// fn DMA7() {
+///     // Safety: DMA channel 7 valid and used by a future.
+///     unsafe { DMA.on_interrupt(7) };
+/// }
+///
+/// # async fn f() -> imxrt_dma::Result<()> {
+/// let mut lpuart = // A LPUART peripheral
+///     # X;
+/// let mut channel_7: Channel = // DMA channel 7
+///     # unsafe { DMA.channel(7) };
+/// channel_7.set_interrupt_on_completion(true);
+/// // TODO unmask interrupts in NVIC!
+///
+/// let mut buffer = [0u8; 32];
+///
+/// peripheral::read(
+///     &mut channel_7,
+///     &mut lpuart,
+///     &mut buffer,
+/// ).await?;
+/// # Ok(()) }
+/// ```
+pub fn read<'a, S, E>(
     channel: &'a mut Channel,
     source: &'a mut S,
     buffer: &'a mut [E],
-) -> Rx<'a, S, E>
+) -> Read<'a, S, E>
 where
     S: Source<E>,
     E: Element,
 {
-    prepare_receive(channel, source, buffer);
-    Rx {
+    prepare_read(channel, source, buffer);
+    Read {
         channel,
         // Safety: transfer is correctly defined
         transfer: unsafe { Transfer::new(channel) },
@@ -168,8 +219,9 @@ where
 
 /// A DMA transfer that sends data to hardware
 ///
-/// See [`transfer`](crate::peripheral::transfer) to create a `Tx`.
-pub struct Tx<'a, D, E>
+/// The future resolves when the device has sent all provided data.
+/// Use [`write()`](crate::peripheral::write) to construct this future.
+pub struct Write<'a, D, E>
 where
     D: Destination<E>,
     E: Element,
@@ -177,10 +229,10 @@ where
     channel: &'a Channel,
     destination: &'a mut D,
     transfer: Transfer<'a>,
-    _elem: PhantomData<E>,
+    _elem: PhantomData<&'a E>,
 }
 
-impl<D, E> Future for Tx<'_, D, E>
+impl<D, E> Future for Write<'_, D, E>
 where
     D: Destination<E>,
     E: Element,
@@ -192,7 +244,7 @@ where
     }
 }
 
-impl<D, E> Drop for Tx<'_, D, E>
+impl<D, E> Drop for Write<'_, D, E>
 where
     D: Destination<E>,
     E: Element,
@@ -204,7 +256,7 @@ where
     }
 }
 
-fn prepare_transfer<D, E>(channel: &mut Channel, buffer: &[E], destination: &mut D)
+fn prepare_write<D, E>(channel: &mut Channel, buffer: &[E], destination: &mut D)
 where
     D: Destination<E>,
     E: Element,
@@ -226,18 +278,61 @@ where
     destination.enable_destination();
 }
 
-/// Use a DMA channel to send a `buffer` of data to the destination peripheral
-pub fn transfer<'a, D, E>(
+/// Use a DMA channel to send a `buffer` of data to the destination peripheral.
+///
+/// Consider using a DMA interrupt handler that calls [`on_interrupt()`](crate::Dma::on_interrupt)
+/// to wake the executor when the transfer completes. Otherwise, poll the future.
+///
+/// # Example
+///
+/// Send five bytes to a LPUART device. Wake the executor when the transfer completes.
+///
+/// ```no_run
+/// use imxrt_dma::{peripheral, channel::Channel};
+/// # static DMA: imxrt_dma::Dma<32> = unsafe { imxrt_dma::Dma::new(core::ptr::null(), core::ptr::null()) };
+/// # struct X;
+/// # unsafe impl peripheral::Destination<u8> for X {
+/// #   fn destination_signal(&self) -> u32 { 0 }
+/// #   fn destination_address(&self) -> *const u8 { panic!() }
+/// #   fn enable_destination(&mut self) { panic!() }
+/// #   fn disable_destination(&mut self) { panic!() }
+/// # }
+///
+/// // #[cortex_m_rt::interrupt]
+/// fn DMA7() {
+///     // Safety: DMA channel 7 valid and used by a future.
+///     unsafe { DMA.on_interrupt(7) };
+/// }
+///
+/// # async fn f() -> imxrt_dma::Result<()> {
+/// let mut lpuart = // A LPUART peripheral
+///     # X;
+/// let mut channel_7: Channel = // DMA channel 7
+///     # unsafe { DMA.channel(7) };
+///
+/// channel_7.set_interrupt_on_completion(true);
+/// // TODO unmask interrupts in NVIC!
+///
+/// let buffer = [4u8, 5, 6, 7, 8];
+///
+/// peripheral::write(
+///     &mut channel_7,
+///     &buffer,
+///     &mut lpuart,
+/// ).await?;
+/// # Ok(()) }
+/// ```
+pub fn write<'a, D, E>(
     channel: &'a mut Channel,
     buffer: &'a [E],
     destination: &'a mut D,
-) -> Tx<'a, D, E>
+) -> Write<'a, D, E>
 where
     D: Destination<E>,
     E: Element,
 {
-    prepare_transfer(channel, buffer, destination);
-    Tx {
+    prepare_write(channel, buffer, destination);
+    Write {
         channel,
         destination,
         // Safety: transfer is correctly defined
@@ -263,7 +358,9 @@ pub unsafe trait Bidirectional<E: Element>: Source<E> + Destination<E> {}
 ///
 /// `FullDuplex` only works with [`Bidirectional`](crate::peripheral::Bidirectional)
 /// peripherals. The transfer acts on a single buffer, sending and receiving data
-/// element by element.
+/// element by element. It yields when all elements are sent and received.
+///
+/// To create this future, use [`full_duplex()`].
 pub struct FullDuplex<'a, P, E>
 where
     P: Bidirectional<E>,
@@ -279,8 +376,67 @@ where
     _elem: PhantomData<E>,
 }
 
-/// Perform a full-suplex DMA transfer using two DMA channels
+/// Perform a full-duplex DMA transfer using two DMA channels
 /// that read and write from a single buffer.
+///
+/// Consider using a DMA interrupt handler that calls [`on_interrupt()`](crate::Dma::on_interrupt)
+/// to wake the executor when the transfer completes. Otherwise, poll the future.
+///
+/// # Example
+///
+/// Perform a full-duplex transfer of five `u32`s with a LPSPI peripheral. Generate an interrupt
+/// after receiving the final LPSPI word.
+///
+/// ```no_run
+/// use imxrt_dma::{peripheral, channel::Channel};
+/// # static DMA: imxrt_dma::Dma<32> = unsafe { imxrt_dma::Dma::new(core::ptr::null(), core::ptr::null()) };
+/// # struct X;
+/// # unsafe impl peripheral::Source<u32> for X {
+/// #   fn source_signal(&self) -> u32 { 0 }
+/// #   fn source_address(&self) -> *const u32 { panic!() }
+/// #   fn enable_source(&mut self) { panic!() }
+/// #   fn disable_source(&mut self) { panic!() }
+/// # }
+/// # unsafe impl peripheral::Destination<u32> for X {
+/// #   fn destination_signal(&self) -> u32 { 0 }
+/// #   fn destination_address(&self) -> *const u32 { panic!() }
+/// #   fn enable_destination(&mut self) { panic!() }
+/// #   fn disable_destination(&mut self) { panic!() }
+/// # }
+/// # unsafe impl peripheral::Bidirectional<u32> for X {}
+///
+/// // #[cortex_m_rt::interrupt]
+/// fn DMA7() {
+///     // Safety: DMA channel 7 valid and used by a future.
+///     unsafe { DMA.on_interrupt(7) };
+/// }
+///
+/// # async fn f() -> imxrt_dma::Result<()> {
+/// let mut lpspi = // A LPSPI peripheral
+///     # X;
+/// let mut channel_7: Channel = // DMA channel 7
+///     # unsafe { DMA.channel(7) };
+/// let mut channel_8: Channel = // DMA channel 8
+///     # unsafe { DMA.channel(8) };
+///
+/// // Using channel_7 for the receive data. Once we've received
+/// // the last word from the LPSPI peripheral, generate an interrupt.
+/// channel_7.set_interrupt_on_completion(true);
+/// // Don't trigger an interrupt after we _send_ the last LPSPI
+/// // word from memory; we're still waiting for one word response.
+/// channel_8.set_interrupt_on_completion(false);
+/// // TODO unmask interrupts in NVIC!
+///
+/// let mut buffer = [4u32, 5, 6, 7, 8];
+///
+/// peripheral::full_duplex(
+///     &mut channel_7,
+///     &mut channel_8,
+///     &mut lpspi,
+///     &mut buffer,
+/// ).await?;
+/// # Ok(()) }
+/// ```
 pub fn full_duplex<'a, P, E>(
     rx_channel: &'a mut Channel,
     tx_channel: &'a mut Channel,
@@ -291,8 +447,8 @@ where
     P: Bidirectional<E>,
     E: Element,
 {
-    prepare_transfer(tx_channel, buffer, peripheral);
-    prepare_receive(rx_channel, peripheral, buffer);
+    prepare_write(tx_channel, buffer, peripheral);
+    prepare_read(rx_channel, peripheral, buffer);
 
     FullDuplex {
         rx_channel,
